@@ -23,7 +23,7 @@ angular.module('mm.addons.competency')
  * @ngdoc service
  * @name $mmaCompetencyHandlers
  */
-.factory('$mmaCompetencyHandlers', function($log, $mmaCompetency, mmCoursesAccessMethods) {
+.factory('$mmaCompetencyHandlers', function($log, $mmaCompetency, mmCoursesAccessMethods, mmUserProfileHandlersTypeNewPage) {
     $log = $log.getInstance('$mmaCompetencyHandlers');
 
     var self = {},
@@ -100,7 +100,7 @@ angular.module('mm.addons.competency')
              */
             return function($scope) {
                 $scope.icon = 'ion-map';
-                $scope.title = 'mma.competency.mylearningplans';
+                $scope.title = 'mma.competency.myplans';
                 $scope.state = 'site.learningplans';
                 $scope.class = 'mma-competency-handler';
             };
@@ -201,7 +201,9 @@ angular.module('mm.addons.competency')
      */
     self.learningPlan = function() {
 
-        var self = {};
+        var self = {
+            type: mmUserProfileHandlersTypeNewPage
+        };
 
         /**
          * Check if handler is enabled.
@@ -217,9 +219,11 @@ angular.module('mm.addons.competency')
          *
          * @param {Number} user     User to check.
          * @param {Number} courseId Course ID.
+         * @param  {Object} [navOptions] Course navigation options for current user. See $mmCourses#getUserNavigationOptions.
+         * @param  {Object} [admOptions] Course admin options for current user. See $mmCourses#getUserAdministrationOptions.
          * @return {Boolean}          True if handler is enabled, false otherwise.
          */
-        self.isEnabledForUser = function(user, courseId) {
+        self.isEnabledForUser = function(user, courseId, navOptions, admOptions) {
 
             if (courseId) {
                 // Link on a user course profile.

@@ -21,7 +21,7 @@ angular.module('mm.addons.userprofilefield_textarea')
  * @ngdoc service
  * @name $mmaUserProfileFieldTextareaHandler
  */
-.factory('$mmaUserProfileFieldTextareaHandler', function() {
+.factory('$mmaUserProfileFieldTextareaHandler', function($mmUtil, $mmText) {
 
     var self = {};
 
@@ -32,6 +32,38 @@ angular.module('mm.addons.userprofilefield_textarea')
      */
     self.isEnabled = function() {
         return true;
+    };
+
+    /**
+     * Get the data to send for the field based on the input data.
+     *
+     * @param  {Object} field          User field to get the data for.
+     * @param  {Boolean} signup        True if user is in signup page.
+     * @param  {String} [registerAuth] Register auth method. E.g. 'email'.
+     * @param  {Object} model          Model with the input data.
+     * @return {Promise}               Promise resolved with data to send for the field.
+     */
+    self.getData = function(field, signup, registerAuth, model) {
+        var name = 'profile_field_' + field.shortname;
+
+        if (model[name]) {
+            return $mmUtil.isRichTextEditorEnabled().then(function(enabled) {
+                var text = model[name].text || '';
+                if (!enabled) {
+                    // Rich text editor not enabled, add some HTML to the message if needed.
+                    text = $mmText.formatHtmlLines(text);
+                }
+
+                return {
+                    type: 'textarea',
+                    name: name,
+                    value: JSON.stringify({
+                        text: text,
+                        format: model[name].format || 1
+                    })
+                };
+            });
+        }
     };
 
     /**

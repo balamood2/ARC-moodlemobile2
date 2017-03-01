@@ -22,9 +22,12 @@ angular.module('mm.core.courses')
  * @name mmCoursesListCtrl
  */
 .controller('mmCoursesListCtrl', function($scope, $mmCourses, $mmCoursesDelegate, $mmUtil, $mmEvents, $mmSite, $q,
-            mmCoursesEventMyCoursesUpdated, mmCoursesEventMyCoursesRefreshed) {
+            mmCoursesEventMyCoursesUpdated, mmCoursesEventMyCoursesRefreshed, mmCoreEventSiteUpdated) {
 
-    $scope.searchEnabled = $mmCourses.isSearchCoursesAvailable();
+    var updateSiteObserver,
+        myCoursesObserver;
+
+    $scope.searchEnabled = $mmCourses.isSearchCoursesAvailable() && !$mmCourses.isSearchCoursesDisabledInSite();
     $scope.areNavHandlersLoadedFor = $mmCoursesDelegate.areNavHandlersLoadedFor;
     $scope.filter = {};
 
@@ -46,32 +49,14 @@ angular.module('mm.core.courses')
 
     // Convenience function to load the handlers of each course.
     function loadCoursesNavHandlers(refresh) {
-        var promises = [],
-            navOptions,
-            admOptions,
-            courseIds = $scope.courses.map(function(course) {
-                return course.id;
-            });
+        var courseIds = $scope.courses.map(function(course) {
+            return course.id;
+        });
 
-        // Get user navigation and administration options to speed up handlers loading.
-        promises.push($mmCourses.getUserNavigationOptions(courseIds).catch(function() {
-            // Couldn't get it, return empty options.
-            return {};
-        }).then(function(options) {
-            navOptions = options;
-        }));
-
-        promises.push($mmCourses.getUserAdministrationOptions(courseIds).catch(function() {
-            // Couldn't get it, return empty options.
-            return {};
-        }).then(function(options) {
-            admOptions = options;
-        }));
-
-        return $q.all(promises).then(function() {
+        return $mmCourses.getCoursesOptions(courseIds).then(function(options) {
             angular.forEach($scope.courses, function(course) {
                 course._handlers = $mmCoursesDelegate.getNavHandlersFor(
-                            course.id, refresh, navOptions[course.id], admOptions[course.id]);
+                            course.id, refresh, options.navOptions[course.id], options.admOptions[course.id]);
             });
         });
     }
@@ -89,6 +74,8 @@ angular.module('mm.core.courses')
         promises.push($mmCourses.invalidateUserNavigationOptions());
         promises.push($mmCourses.invalidateUserAdministrationOptions());
 
+        $mmCoursesDelegate.clearCoursesHandlers();
+
         $q.all(promises).finally(function() {
             fetchCourses(true).finally(function() {
                 $scope.$broadcast('scroll.refreshComplete');
@@ -96,9 +83,21 @@ angular.module('mm.core.courses')
         });
     };
 
-    $mmEvents.on(mmCoursesEventMyCoursesUpdated, function(siteid) {
+    myCoursesObserver = $mmEvents.on(mmCoursesEventMyCoursesUpdated, function(siteid) {
         if (siteid == $mmSite.getId()) {
             fetchCourses();
         }
+    });
+
+
+    updateSiteObserver = $mmEvents.on(mmCoreEventSiteUpdated, function(siteId) {
+        if ($mmSite.getId() === siteId) {
+            $scope.searchEnabled = $mmCourses.isSearchCoursesAvailable() && !$mmCourses.isSearchCoursesDisabledInSite();
+        }
+    });
+
+    $scope.$on('$destroy', function() {
+        myCoursesObserver && myCoursesObserver.off && myCoursesObserver.off();
+        updateSiteObserver && updateSiteObserver.off && updateSiteObserver.off();
     });
 });

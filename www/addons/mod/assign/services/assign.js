@@ -23,9 +23,10 @@ angular.module('mm.addons.mod_assign')
  */
 .factory('$mmaModAssign', function($mmSite, $q, $mmUser, $mmSitesManager, mmaModAssignComponent, $mmFilepool, $mmComments, $mmUtil,
         $mmaModAssignSubmissionDelegate, mmaModAssignSubmissionStatusNew, mmaModAssignSubmissionStatusSubmitted, $mmText, $mmApp,
-        $mmaModAssignOffline, mmaModAssignGradingStatusGraded, mmaModAssignGradingStatusNotGraded,
+        $mmaModAssignOffline, mmaModAssignGradingStatusGraded, mmaModAssignGradingStatusNotGraded, $mmGrades,
         mmaModMarkingWorkflowStateReleased) {
-    var self = {};
+    var self = {},
+        gradingOfflineEnabled = {};
 
     /**
      * Check if the user can submit in offline. This should only be used if submissionStatus.lastattempt.cansubmit cannot
@@ -348,6 +349,20 @@ angular.module('mm.addons.mod_assign')
         });
     };
 
+    // Convenience function to find participant on a list.
+    function getParticipantFromUserId(participants, id) {
+        if (participants) {
+            for (var x in participants) {
+                if (participants[x].id == id) {
+                    var participant = participants[x];
+                    delete participants[x];
+                    return participant;
+                }
+            }
+        }
+        return false;
+    }
+
     /**
      * Get user data for submissions since they only have userid.
      *
@@ -365,79 +380,89 @@ angular.module('mm.addons.mod_assign')
         var promises = [],
             subs = [];
 
-        angular.forEach(submissions, function(submission) {
-            var participant = false;
-            if (submission.userid > 0) {
-                submission.submitid = submission.userid;
-
-                if (!blind && participants) {
-                    for (var x in participants) {
-                        if (participants[x].id == submission.userid) {
-                            participant = participants[x];
-                            delete participants[x];
-                            break;
-                        }
-                    }
-                    if (participant) {
-                        submission.userfullname = participant.fullname;
-                        submission.userprofileimageurl = participant.profileimageurl;
-                        subs.push(submission);
-                    }
-                } else {
-                    if (!blind) {
-                        promises.push($mmUser.getProfile(submission.userid, courseId, true).then(function(user) {
-                            submission.userfullname = user.fullname;
-                            submission.userprofileimageurl = user.profileimageurl;
-                            subs.push(submission);
-                        }).catch(function() {
-                            // Error getting profile, resolve promise without adding any extra data.
-                        }));
-                    } else {
-                        // Users not blinded! (Moodle < 3.1.1, 3.2)
-                        delete submission.userid;
-
-                        promises.push(self.getAssignmentUserMappings(assignId, submission.submitid).then(function(blindId) {
-                            submission.blindid = blindId;
-                        }).catch(function() {
-                            // Error mapping user, fail silently (Moodle < 2.6)
-                        }));
-
-                        // Add it always.
-                        subs.push(submission);
-                    }
-                }
-            } else if (submission.blindid > 0) {
-                for (var x in participants) {
-                    if (participants[x].id == submission.blindid) {
-                        participant = participants[x];
-                        delete participants[x];
-                        break;
-                    }
-                }
-                submission.submitid = submission.blindid;
-                subs.push(submission);
-            }
-        });
-
-        if (participants) {
-            angular.forEach(participants, function(participant) {
-                var submission = {
-                    submitid: participant.id
-                };
-
-                if (!blind) {
-                    submission.userid = participant.id;
-                    submission.userfullname = participant.fullname;
-                    submission.userprofileimageurl = participant.profileimageurl;
-                } else {
-                    submission.blindid = participant.id;
-                }
-                submission.status = participant.submitted ? mmaModAssignSubmissionStatusSubmitted : mmaModAssignSubmissionStatusNew;
-                subs.push(submission);
-            });
+        // Empty participants list will be treated as no list.
+        if (participants && participants.length == 0) {
+            participants = false;
         }
 
+        angular.forEach(submissions, function(submission) {
+            submission.submitid = submission.userid > 0 ? submission.userid : submission.blindid;
+            if (submission.submitid <= 0) {
+                return;
+            }
+
+            var participant = getParticipantFromUserId(participants, submission.submitid);
+            if (participants && !participant) {
+                // Avoid permission denied error. Participant not found on list.
+                return;
+            }
+
+            if (participant) {
+                if (!blind) {
+                    submission.userfullname = participant.fullname;
+                    submission.userprofileimageurl = participant.profileimageurl;
+                }
+
+                submission.manyGroups = !!participant.groups && participant.groups.length > 1;
+                if (participant.groupname) {
+                    submission.groupid = participant.groupid;
+                    submission.groupname = participant.groupname;
+                }
+            }
+
+            var promise = $q.when();
+            if (submission.userid > 0) {
+                if (blind) {
+                    // Blind but not blinded! (Moodle < 3.1.1, 3.2)
+                    delete submission.userid;
+
+                    promise = self.getAssignmentUserMappings(assignId, submission.submitid).then(function(blindId) {
+                        submission.blindid = blindId;
+                    }).catch(function() {
+                        // Error mapping user, fail silently (Moodle < 2.6)
+                    });
+                } else if (!participant) {
+                    // No blind, no participants.
+                    promise = $mmUser.getProfile(submission.userid, courseId, true).then(function(user) {
+                        submission.userfullname = user.fullname;
+                        submission.userprofileimageurl = user.profileimageurl;
+                    }).catch(function() {
+                        // Error getting profile, resolve promise without adding any extra data.
+                    });
+                }
+            }
+
+            promises.push(promise.then(function() {
+                // Add to the list.
+                if (submission.userfullname || submission.blindid) {
+                    subs.push(submission);
+                }
+            }));
+        });
+
         return $q.all(promises).then(function() {
+            if (participants) {
+                angular.forEach(participants, function(participant) {
+                    var submission = {
+                        submitid: participant.id
+                    };
+
+                    if (!blind) {
+                        submission.userid = participant.id;
+                        submission.userfullname = participant.fullname;
+                        submission.userprofileimageurl = participant.profileimageurl;
+                    } else {
+                        submission.blindid = participant.id;
+                    }
+
+                    if (participant.groupname) {
+                        submission.groupid = participant.groupid;
+                        submission.groupname = participant.groupname;
+                    }
+                    submission.status = participant.submitted ? mmaModAssignSubmissionStatusSubmitted : mmaModAssignSubmissionStatusNew;
+                    subs.push(submission);
+                });
+            }
             return subs;
         });
     };
@@ -486,7 +511,7 @@ angular.module('mm.addons.mod_assign')
                 return $q.reject();
             }
 
-            groupId = 0;
+            groupId = groupId || 0;
             var params = {
                     "assignid": assignId,
                     "groupid": groupId,
@@ -665,22 +690,24 @@ angular.module('mm.addons.mod_assign')
      * @return {Promise}
      */
     self.invalidateContent = function(moduleId, courseId, siteId) {
-        var promises = [];
         siteId = siteId || $mmSite.getId();
 
-        promises.push(self.getAssignment(courseId, moduleId, siteId).then(function(assign) {
+        return self.getAssignment(courseId, moduleId, siteId).then(function(assign) {
             var ps = [];
             // Do not invalidate assignment data before getting assignment info, we need it!
-            ps.push(self.invalidateAssignmentData(courseId, siteId));
             ps.push(self.invalidateAllSubmissionData(assign.id, siteId));
             ps.push(self.invalidateAssignmentUserMappingsData(assign.id, siteId));
             ps.push(self.invalidateListParticipantsData(assign.id, siteId));
             ps.push($mmComments.invalidateCommentsByInstance('module', assign.id, siteId));
 
             return $q.all(ps);
-        }));
+        }).finally(function() {
+            var ps = [];
+            ps.push(self.invalidateAssignmentData(courseId, siteId));
+            ps.push($mmGrades.invalidateGradeCourseItems(courseId));
 
-        return $q.all(promises);
+            return $q.all(ps);
+        });
     };
 
     /**
@@ -1007,16 +1034,21 @@ angular.module('mm.addons.mod_assign')
             return storeOffline();
         }
 
-        return self.saveSubmissionOnline(assignmentId, pluginData, siteId).then(function() {
-            return true;
-        }).catch(function(error) {
-            if (allowOffline && error && !error.wserror) {
-                // Couldn't connect to server, store in offline.
-                return storeOffline();
-            } else {
-                // The WebService has thrown an error or offline not supported, reject.
-                return $q.reject(error.error);
-            }
+        siteId = siteId || $mmSite.getId();
+
+        // If there's already a submission to be sent to the server, discard it first.
+        return $mmaModAssignOffline.deleteSubmission(assignmentId, userId, siteId).then(function() {
+            return self.saveSubmissionOnline(assignmentId, pluginData, siteId).then(function() {
+                return true;
+            }).catch(function(error) {
+                if (allowOffline && error && !error.wserror) {
+                    // Couldn't connect to server, store in offline.
+                    return storeOffline();
+                } else {
+                    // The WebService has thrown an error or offline not supported, reject.
+                    return $q.reject(error.error);
+                }
+            });
         });
 
         // Store the submission to be synchronized later.
@@ -1083,16 +1115,21 @@ angular.module('mm.addons.mod_assign')
             return storeOffline();
         }
 
-        return self.submitForGradingOnline(assignmentId, acceptStatement, siteId).then(function() {
-            return true;
-        }).catch(function(error) {
-            if (error && !error.wserror) {
-                // Couldn't connect to server, store in offline.
-                return storeOffline();
-            } else {
-                // The WebService has thrown an error or offline not supported, reject.
-                return $q.reject(error.error);
-            }
+        siteId = siteId || $mmSite.getId();
+
+        // If there's already a submission to be sent to the server, discard it first.
+        return $mmaModAssignOffline.deleteSubmission(assignmentId, undefined, siteId).then(function() {
+            return self.submitForGradingOnline(assignmentId, acceptStatement, siteId).then(function() {
+                return true;
+            }).catch(function(error) {
+                if (error && !error.wserror) {
+                    // Couldn't connect to server, store in offline.
+                    return storeOffline();
+                } else {
+                    // The WebService has thrown an error or offline not supported, reject.
+                    return $q.reject(error.error);
+                }
+            });
         });
 
         // Store the submission to be synchronized later.
@@ -1138,6 +1175,18 @@ angular.module('mm.addons.mod_assign')
         });
     };
 
+    // Convenience function to check if grading offline is enabled.
+    function isGradingOfflineEnabled(siteId) {
+        if (typeof gradingOfflineEnabled[siteId] != 'undefined') {
+            return $q.when(gradingOfflineEnabled[siteId]);
+        }
+
+        return $mmGrades.isGradeItemsAvalaible(siteId).then(function(enabled) {
+            gradingOfflineEnabled[siteId] = enabled;
+            return enabled;
+        });
+    }
+
     /**
      * Submit the grading for the current user and assignment. It will use old or new WS depending on availability.
      *
@@ -1152,18 +1201,82 @@ angular.module('mm.addons.mod_assign')
      * @param  {String}  workflowState  Next workflow State.
      * @param  {Boolean} applyToAll     If it's a team submission, if the grade applies to all group members.
      * @param  {Object}  outcomes       Object including all outcomes values. If empty, any of them will be sent.
+     * @param  {Object}  pluginData     Feedback plugin data to save.
+     * @param  {Number}  courseId       Course ID the assign belongs to.
+     * @param  {String}  [siteId]       Site ID. If not defined, current site.
+     * @return {Promise}                Promise resolved with true if sent to server, resolved with false if stored offline.
+     */
+    self.submitGradingForm = function(assignmentId, userId, grade, attemptNumber, addAttempt, workflowState, applyToAll, outcomes,
+            pluginData, courseId, siteId) {
+
+        siteId = siteId || $mmSite.getId();
+
+        // Grading offline is only allowed if WS of grade items is enabled to avoid inconsistency.
+        return isGradingOfflineEnabled(siteId).then(function (enabled) {
+            if (!enabled) {
+                return self.submitGradingFormOnline(assignmentId, userId, grade, attemptNumber, addAttempt, workflowState,
+                    applyToAll, outcomes, pluginData, siteId);
+            }
+
+            if (!$mmApp.isOnline()) {
+                // App is offline, store the action.
+                return storeOffline();
+            }
+
+            // If there's already a grade to be sent to the server, discard it first.
+            return $mmaModAssignOffline.deleteSubmissionGrade(assignmentId, userId, siteId).then(function() {
+                return self.submitGradingFormOnline(assignmentId, userId, grade, attemptNumber, addAttempt, workflowState, applyToAll,
+                        outcomes, pluginData, siteId).then(function() {
+                    return true;
+                }).catch(function(error) {
+                    if (error && !error.wserror) {
+                        // Couldn't connect to server, store in offline.
+                        return storeOffline();
+                    } else {
+                        // The WebService has thrown an error or offline not supported, reject.
+                        return $q.reject(error.error);
+                    }
+                });
+            });
+        });
+
+        // Store the grading to be synchronized later.
+        function storeOffline() {
+            return $mmaModAssignOffline.submitGradingForm(assignmentId, userId, grade, attemptNumber, addAttempt, workflowState,
+                    applyToAll, outcomes, pluginData, courseId, siteId).then(function() {
+                return false;
+            });
+        }
+    };
+
+    /**
+     * Submit the grading for the current user and assignment. It will use old or new WS depending on availability.
+     * It will fail if offline or cannot connect.
+     *
+     * @module mm.addons.mod_assign
+     * @ngdoc method
+     * @name $mmaModAssign#submitGradingFormOnline
+     * @param  {Number}  assignmentId   Assign ID.
+     * @param  {Number}  userId         User ID.
+     * @param  {Number}  grade          Grade to submit.
+     * @param  {Number}  attemptNumber  Number of the attempt number being graded.
+     * @param  {Number}  addAttempt     Admit the user to attempt again.
+     * @param  {String}  workflowState  Next workflow State.
+     * @param  {Boolean} applyToAll     If it's a team submission, if the grade applies to all group members.
+     * @param  {Object}  outcomes       Object including all outcomes values. If empty, any of them will be sent.
+     * @param  {Object}  pluginData     Feedback plugin data to save.
      * @param  {String}  [siteId]       Site ID. If not defined, current site.
      * @return {Promise}                Promise resolved when submitted, rejected otherwise.
      */
-    self.submitGradingForm = function(assignmentId, userId, grade, attemptNumber, addAttempt, workflowState, applyToAll, outcomes,
-            siteId) {
+    self.submitGradingFormOnline = function(assignmentId, userId, grade, attemptNumber, addAttempt, workflowState, applyToAll,
+            outcomes, pluginData, siteId) {
         return $mmSitesManager.getSite(siteId).then(function(site) {
-            grade = $mmUtil.unformatFloat(grade);
             if (site.wsAvailable('mod_assign_submit_grading_form')) {
                 return submitGradingForm(assignmentId, userId, grade, attemptNumber, addAttempt, workflowState, applyToAll,
-                    outcomes, site);
+                    outcomes, pluginData, site);
             } else if(site.wsAvailable('mod_assign_save_grade')) {
-                return saveGrade(assignmentId, userId, grade, attemptNumber, addAttempt, workflowState, applyToAll, site);
+                return saveGrade(assignmentId, userId, grade, attemptNumber, addAttempt, workflowState, applyToAll, pluginData,
+                    site);
             } else {
                 return $q.reject();
             }
@@ -1173,7 +1286,7 @@ angular.module('mm.addons.mod_assign')
     // Legacy grading WS for Moodle < 3.2 when mod_assign_submit_grading_form is not avalaible.
     // See params on $mmaModAssign#submitGradingForm
     // It does not have outcomes support.
-    function saveGrade(assignmentId, userId, grade, attemptNumber, addAttempt, workflowState, applyToAll, site) {
+    function saveGrade(assignmentId, userId, grade, attemptNumber, addAttempt, workflowState, applyToAll, pluginData, site) {
         var params = {
                 assignmentid: assignmentId,
                 userid: userId ? userId : site.getUserId(),
@@ -1181,7 +1294,8 @@ angular.module('mm.addons.mod_assign')
                 attemptnumber: attemptNumber,
                 addattempt: addAttempt ? 1 : 0,
                 workflowstate: workflowState,
-                applytoall: applyToAll ? 1 : 0
+                applytoall: applyToAll ? 1 : 0,
+                plugindata: pluginData
             },
             preSets = {
                 responseExpected: false
@@ -1197,7 +1311,8 @@ angular.module('mm.addons.mod_assign')
 
     // New grading WS for Moodle >= 3.2.
     // See params on $mmaModAssign#submitGradingForm
-    function submitGradingForm(assignmentId, userId, grade, attemptNumber, addAttempt, workflowState, applyToAll, outcomes, site) {
+    function submitGradingForm(assignmentId, userId, grade, attemptNumber, addAttempt, workflowState, applyToAll, outcomes,
+            pluginData, site) {
         var jsondata, serialized, params;
 
         jsondata = {
@@ -1212,7 +1327,11 @@ angular.module('mm.addons.mod_assign')
             jsondata['outcome_' + index + '[' + userId + ']'] = outcome;
         });
 
-        serialized = $mmUtil.param(jsondata);
+        angular.forEach(pluginData, function(data, index) {
+            jsondata[index] = data;
+        });
+
+        serialized = $mmUtil.param(jsondata, true);
 
         params = {
             assignmentid: assignmentId,

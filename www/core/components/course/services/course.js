@@ -252,14 +252,15 @@ angular.module('mm.core.course')
      * @module mm.core.course
      * @ngdoc method
      * @name $mmCourse#getModule
-     * @param {Number} moduleId             The module ID.
-     * @param {Number} [courseId]           The course ID. Recommended to speed up the process and minimize data usage.
-     * @param {Number} [sectionId]          The section ID.
-     * @param {Boolean} [preferCache=false] True if shouldn't call WS if data is cached, false otherwise.
-     * @param  {String} [siteId]            Site ID. If not defined, current site.
-     * @return {Promise}                    Promise resolved with the module.
+     * @param  {Number} moduleId       The module ID.
+     * @param  {Number} [courseId]     The course ID. Recommended to speed up the process and minimize data usage.
+     * @param  {Number} [sectionId]    The section ID.
+     * @param  {Boolean} [preferCache] True if shouldn't call WS if data is cached, false otherwise.
+     * @param  {Boolean} [ignoreCache] True if it should ignore cached data (it will always fail in offline or server down).
+     * @param  {String} [siteId]       Site ID. If not defined, current site.
+     * @return {Promise}               Promise resolved with the module.
      */
-    self.getModule = function(moduleId, courseId, sectionId, preferCache, siteId) {
+    self.getModule = function(moduleId, courseId, sectionId, preferCache, ignoreCache, siteId) {
         siteId = siteId || $mmSite.getId();
 
         if (!moduleId) {
@@ -303,6 +304,11 @@ angular.module('mm.core.course')
                 cacheKey: getModuleCacheKey(moduleId),
                 omitExpires: preferCache
             };
+
+            if (!preferCache && ignoreCache) {
+                preSets.getFromCache = 0;
+                preSets.emergencyCache = 0;
+            }
 
             if (sectionId) {
                 params.options.push({
@@ -475,32 +481,24 @@ angular.module('mm.core.course')
                 courseid: courseId,
                 options: options
             }, preSets).then(function(sections) {
-                var promise,
-                    siteHomeId = site.getInfo().siteid || 1;
+                var siteHomeId = site.getSiteHomeId(),
+                    showSections = true;
 
                 if (courseId == siteHomeId) {
-                    // Check if frontpage sections should be shown.
-                    promise = site.getConfig('numsections').catch(function() {
-                        // Ignore errors for not present settings assuming numsections will be true.
-                        return $q.when(true);
-                    });
-                } else {
-                    promise = $q.when(true);
+                    showSections = site.getStoredConfig('numsections');
                 }
 
-                return promise.then(function(showSections) {
-                    if (!showSections && sections.length > 0) {
-                        // Get only the last section (Main menu block section).
-                        sections.pop();
-                    }
+                if (typeof showSections != 'undefined' && !showSections && sections.length > 0) {
+                    // Get only the last section (Main menu block section).
+                    sections.pop();
+                }
 
-                    angular.forEach(sections, function(section) {
-                        angular.forEach(section.modules, function(module) {
-                            addContentsIfNeeded(module);
-                        });
+                angular.forEach(sections, function(section) {
+                    angular.forEach(section.modules, function(module) {
+                        addContentsIfNeeded(module);
                     });
-                    return sections;
                 });
+                return sections;
 
             });
         });
@@ -563,7 +561,7 @@ angular.module('mm.core.course')
     self.invalidateSections = function(courseId, userId, siteId) {
         return $mmSitesManager.getSite(siteId).then(function(site) {
             var promises = [],
-                siteHomeId = site.getInfo().siteid || 1;
+                siteHomeId = site.getSiteHomeId();
 
             userId = userId || site.getUserId();
 
@@ -582,27 +580,27 @@ angular.module('mm.core.course')
      * @module mm.core.course
      * @ngdoc method
      * @name $mmCourse#loadModuleContents
-     * @param  {Object} module      Module to load the contents.
-     * @param  {Number} [courseId]  The course ID. Recommended to speed up the process and minimize data usage.
-     * @param  {Number} [sectionId] The section ID.
-     * @param  {String} [siteId]    Site ID. If not defined, current site.
-     * @return {Promise}            Promise resolved when loaded.
+     * @param  {Object} module         Module to load the contents.
+     * @param  {Number} [courseId]     The course ID. Recommended to speed up the process and minimize data usage.
+     * @param  {Number} [sectionId]    The section ID.
+     * @param  {Boolean} [preferCache] True if shouldn't call WS if data is cached, false otherwise.
+     * @param  {Boolean} [ignoreCache] True if it should ignore cached data (it will always fail in offline or server down).
+     * @param  {String} [siteId]       Site ID. If not defined, current site.
+     * @return {Promise}               Promise resolved when loaded.
      */
-    self.loadModuleContents = function(module, courseId, sectionId, siteId) {
+    self.loadModuleContents = function(module, courseId, sectionId, preferCache, ignoreCache, siteId) {
         siteId = siteId || $mmSite.getId();
 
-        if (module.contents && module.contents.length) {
+        if (!ignoreCache && module.contents && module.contents.length) {
             // Already loaded.
             return $q.when();
         }
 
         return $mmSitesManager.getSite(siteId).then(function(site) {
-            var version = parseInt(site.getInfo().version, 10);
-
-            if (version >= 2015051100) {
+            if (site.isVersionGreaterEqualThan('2.9')) {
                 // From Moodle 2.9 the course contents can be filtered, so maybe the module doesn't have contents
                 // because they were filtered. Try to get its contents.
-                return self.getModule(module.id, courseId, sectionId, false, siteId).then(function(mod) {
+                return self.getModule(module.id, courseId, sectionId, preferCache, ignoreCache, siteId).then(function(mod) {
                     module.contents = mod.contents;
                 });
             }

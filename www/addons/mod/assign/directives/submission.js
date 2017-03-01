@@ -27,7 +27,10 @@ angular.module('mm.addons.mod_assign')
         mmaModAssignUnlimitedAttempts, mmUserProfileState, mmaModAssignSubmissionStatusNew, mmaModAssignSubmissionStatusSubmitted,
         mmaModAssignSubmissionInvalidatedEvent, $mmGroups, $state, $mmaModAssignHelper, mmaModAssignSubmissionStatusReopened,
         $mmEvents, mmaModAssignSubmittedForGradingEvent, $mmFileUploaderHelper, $mmApp, $mmText, mmaModAssignComponent, $mmUtil,
-        $mmaModAssignOffline, mmaModAssignEventManualSynced, $mmCourse, $mmAddonManager, mmaModAssignAttemptReopenMethodManual) {
+        $mmaModAssignOffline, mmaModAssignEventManualSynced, $mmCourse, $mmGrades, mmaModAssignAttemptReopenMethodManual,
+        $mmLang, $mmSyncBlock, mmaModAssignEventSubmitGrade, $ionicPlatform, mmaModAssignGradedEvent) {
+
+    var originalGrades =  {};
 
     /**
      * Set the submission status name and class.
@@ -88,9 +91,19 @@ angular.module('mm.addons.mod_assign')
         scope.grade = {
             method: false,
             grade: false,
+            modified: 0,
             gradingStatus: false,
             addAttempt : false,
-            applyToAll: false
+            applyToAll: false,
+            scale: false,
+            lang: false
+        };
+
+        originalGrades =  {
+            grade: false,
+            addAttempt: false,
+            applyToAll: false,
+            outcomes: {}
         };
 
         if (feedbackStatus) {
@@ -110,91 +123,175 @@ angular.module('mm.addons.mod_assign')
 
             // Do not override already loaded grade.
             if (feedbackStatus.grade && feedbackStatus.grade.grade && !scope.grade.grade) {
-                scope.grade.grade = $mmUtil.formatFloat(feedbackStatus.grade.grade);
+                var parsedGrade = parseFloat(feedbackStatus.grade.grade);
+                scope.grade.grade = parsedGrade || parsedGrade == 0 ? parsedGrade : null;
             }
         } else {
             // If no feedback, always show Submission.
             scope.showSubmission = true;
         }
 
-        scope.grade.gradingStatus = scope.gradingStatus;
+        scope.grade.gradingStatus = scope.lastAttempt.gradingstatus;
 
         return $mmaModAssign.isGradingEnabled().then(function(enabled) {
-            if (enabled) {
-                return $mmCourse.getModuleBasicGradeInfo(moduleId).then(function(gradeInfo) {
-                    if (gradeInfo) {
-
-                        scope.gradeInfo = gradeInfo;
-                        if (gradeInfo.advancedgrading && gradeInfo.advancedgrading[0] &&
-                                typeof gradeInfo.advancedgrading[0].method != 'undefined') {
-                            scope.grade.method = gradeInfo.advancedgrading[0].method || 'simple';
-                        } else {
-                            scope.grade.method = 'simple';
-                        }
-                        scope.isGrading = true;
-
-                        // Grades can be saved if simple grading.
-                        scope.canSaveGrades = scope.grade.method == 'simple';
-
-                        if ($mmaModAssign.isOutcomesEditEnabled()) {
-                            angular.forEach(scope.gradeInfo.outcomes, function(outcome) {
-                                if (outcome.scale) {
-                                    outcome.options = outcome.scale.split(",");
-                                    outcome.options = outcome.options.map(function (value) {return value.trim()});
-                                    outcome.options.unshift($translate.instant('mma.grades.nooutcome'));
-                                }
-                                outcome.selectedId = 0;
-                            });
-                        }
-
-                        // Get grade addon if avalaible.
-                        var $mmaGrades = $mmAddonManager.get('$mmaGrades');
-                        if (!$mmaGrades) {
-                            return $q.when();
-                        }
-
-                        return $mmaGrades.getGradeModuleItems(courseId, moduleId, userId).then(function(grades) {
-                            var outcomes = {};
-                            angular.forEach(grades, function(grade) {
-                                if (!grade.outcomeid && !grade.scaleid) {
-                                    scope.grade.grade = $mmUtil.formatFloat(grade.gradeformatted);
-                                } else if (grade.outcomeid) {
-                                    // Only show outcomes with info on it outcomeid could be null if outcomes are disabled on site.
-                                    angular.forEach(scope.gradeInfo.outcomes, function(outcome) {
-                                        if (outcome.id == grade.outcomeid) {
-                                            outcome.selected = grade.gradeformatted;
-                                            if (outcome.options) {
-                                                outcome.selectedId = outcome.options.indexOf(outcome.selected) || 0;
-                                                if (outcome.selectedId < 0) {
-                                                    outcome.selectedId = 0;
-                                                }
-                                                outcome.itemNumber = grade.itemnumber;
-                                            }
-                                            outcomes[outcome.id] = outcome;
-                                        }
-                                    });
-                                }
-                            });
-                            scope.gradeInfo.outcomes = outcomes;
-                        });
-                    }
-                }).then(function() {
-                    var isManual = assign.attemptreopenmethod == mmaModAssignAttemptReopenMethodManual,
-                        isUnlimited = assign.maxattempts == mmaModAssignUnlimitedAttempts,
-                        isLessThanMaxAttempts = scope.userSubmission &&
-                            (scope.userSubmission.attemptnumber < (assign.maxattempts - 1));
-
-                    scope.allowAddAttempt = isManual && (!scope.userSubmission || isUnlimited || isLessThanMaxAttempts);
-
-                    if (assign.teamsubmission) {
-                        scope.grade.applyToAll = true;
-                    }
-                    if (assign.markingworkflow && scope.grade.gradingStatus) {
-                        scope.workflowStatusTranslationId =  getSubmissionGradingStatusTranslationId(scope.grade.gradingStatus);
-                    }
-                });
+            if (!enabled) {
+                return $q.when();
             }
+            return $mmCourse.getModuleBasicGradeInfo(moduleId).then(function(gradeInfo) {
+                if (!gradeInfo) {
+                    return $q.when();
+                }
+
+                if (!scope.$$destroyed) {
+                    // Block the assignment.
+                    $mmSyncBlock.blockOperation(mmaModAssignComponent, assign.id);
+                }
+
+                scope.gradeInfo = gradeInfo;
+                if (gradeInfo.advancedgrading && gradeInfo.advancedgrading[0] &&
+                        typeof gradeInfo.advancedgrading[0].method != 'undefined') {
+                    scope.grade.method = gradeInfo.advancedgrading[0].method || 'simple';
+                } else {
+                    scope.grade.method = 'simple';
+                }
+                scope.isGrading = true;
+
+                // Grades can be saved if simple grading.
+                scope.canSaveGrades = scope.grade.method == 'simple';
+
+                if (scope.gradeInfo.scale) {
+                    scope.grade.scale = formatScaleOptions(scope.gradeInfo.scale, $translate.instant('mm.core.nograde'));
+                } else {
+                    // Get current language to format grade input field.
+                    $mmLang.getCurrentLanguage().then(function(lang) {
+                        scope.grade.lang = lang;
+                    });
+                }
+
+                if ($mmaModAssign.isOutcomesEditEnabled()) {
+                    angular.forEach(scope.gradeInfo.outcomes, function(outcome) {
+                        if (outcome.scale) {
+                            outcome.options =
+                                formatScaleOptions(outcome.scale, $translate.instant('mm.grades.nooutcome'));
+                        }
+                        outcome.selectedId = 0;
+                        originalGrades.outcomes[outcome.id] = outcome.selectedId;
+                    });
+                }
+
+                return $mmGrades.getGradeModuleItems(courseId, moduleId, userId).then(function(grades) {
+                    var outcomes = {};
+
+                    angular.forEach(grades, function(grade) {
+                        if (!grade.outcomeid && !grade.scaleid) {
+                            if (scope.grade.scale) {
+                                scope.grade.grade = getSelectedScaleId(scope.grade.scale, grade.gradeformatted);
+                            } else {
+                                var parsedGrade = parseFloat(grade.gradeformatted);
+                                scope.grade.grade = parsedGrade || parsedGrade == 0 ? parsedGrade : null;
+                            }
+                            scope.grade.modified = grade.gradedategraded;
+                            originalGrades.grade = scope.grade.grade;
+                        } else if (grade.outcomeid) {
+                            // Only show outcomes with info on it outcomeid could be null if outcomes are disabled on site.
+                            angular.forEach(scope.gradeInfo.outcomes, function(outcome) {
+                                if (outcome.id == grade.outcomeid) {
+                                    outcome.selected = grade.gradeformatted;
+                                    outcome.modified = grade.gradedategraded;
+                                    if (outcome.options) {
+                                        outcome.selectedId = getSelectedScaleId(outcome.options, outcome.selected);
+                                        originalGrades.outcomes[outcome.id] = outcome.selectedId;
+                                        outcome.itemNumber = grade.itemnumber;
+                                    }
+                                    outcomes[outcome.id] = outcome;
+                                }
+                            });
+                        }
+                    });
+                    scope.gradeInfo.outcomes = outcomes;
+                });
+            }).then(function() {
+                if (!scope.isGrading) {
+                    return $q.when();
+                }
+
+                var isManual = assign.attemptreopenmethod == mmaModAssignAttemptReopenMethodManual,
+                    isUnlimited = assign.maxattempts == mmaModAssignUnlimitedAttempts,
+                    isLessThanMaxAttempts = scope.userSubmission &&
+                        (scope.userSubmission.attemptnumber < (assign.maxattempts - 1));
+
+                scope.allowAddAttempt = isManual && (!scope.userSubmission || isUnlimited || isLessThanMaxAttempts);
+
+                if (assign.teamsubmission) {
+                    scope.grade.applyToAll = true;
+                    originalGrades.applyToAll = true;
+                }
+                if (assign.markingworkflow && scope.grade.gradingStatus) {
+                    scope.workflowStatusTranslationId =
+                        $mmaModAssign.getSubmissionGradingStatusTranslationId(scope.grade.gradingStatus);
+                }
+
+                if (!scope.feedback) {
+                    scope.feedback = {};
+
+                    // Feedback plugins not present, we have to use assign configs to detect the plugins used.
+                    scope.feedback.plugins = $mmaModAssignHelper.getPluginsEnabled(assign, 'assignfeedback');
+                }
+
+                // Check if there's any offline data for this submission.
+                if (scope.canSaveGrades) {
+                    // Submission grades are not identified using attempt number so it can retrieve the feedback for a previous
+                    // attempt. The app will not treat that as an special case.
+                    return $mmaModAssignOffline.getSubmissionGrade(assign.id, userId).then(function(data) {
+                        // Load offline grades.
+                        if (data &&
+                                (!feedbackStatus || !feedbackStatus.gradeddate || feedbackStatus.gradeddate < data.timemodified)) {
+                            // If grade has been modified from gradebook, do not use offline.
+                            if (scope.grade.modified < data.timemodified) {
+                                scope.grade.grade = data.grade;
+                                scope.gradingStatusTranslationId = 'mma.mod_assign.gradenotsynced';
+                                scope.gradingClass = "";
+                            }
+
+                            scope.grade.applyToAll = data.applytoall;
+                            scope.grade.addAttempt = data.addattempt;
+
+                            if (data.outcomes && Object.keys(data.outcomes).length) {
+                                angular.forEach(scope.gradeInfo.outcomes, function(outcome) {
+                                    if (typeof data.outcomes[outcome.itemNumber] != "undefined") {
+                                        // If outcome has been modified from gradebook, do not use offline.
+                                        if (outcome.modified < data.timemodified) {
+                                            outcome.selectedId = data.outcomes[outcome.itemNumber];
+                                        }
+                                    }
+                                });
+                            }
+                        }
+                    });
+                } else {
+                    return $mmCourse.getModule(moduleId, courseId, false, true).then(function(mod) {
+                        scope.gradeUrl = mod.url + "&action=grader&userid=" + userId;
+                    });
+                }
+            });
         });
+    }
+
+    // Convenience function to format scale selectors options.
+    function formatScaleOptions(options, defaultOption) {
+        options = options.split(",");
+        options = options.map(function (value) {return value.trim();});
+        options.unshift(defaultOption);
+        return options;
+    }
+
+    // Convenience function to get scale selected option.
+    function getSelectedScaleId(options, selected) {
+        var index = options.indexOf(selected) || 0;
+        if (index < 0) {
+            return 0;
+        }
+        return index;
     }
 
     // Directive controller.
@@ -205,6 +302,8 @@ angular.module('mm.addons.mod_assign')
             var isBlind = !!blindId,
                 assign;
 
+            scope.previousAttempt = false;
+
             if (!submitId) {
                 submitId = $mmSite.getUserId();
                 isBlind = false;
@@ -213,7 +312,7 @@ angular.module('mm.addons.mod_assign')
             return $mmaModAssign.getAssignment(courseId, moduleId).then(function(assignData) {
                 assign = assignData;
 
-                var time = parseInt(Date.now() / 1000),
+                var time = $mmUtil.timestamp(),
                     promises = [];
 
                 scope.assign = assign;
@@ -225,6 +324,7 @@ angular.module('mm.addons.mod_assign')
                 scope.currentAttempt = 0;
                 scope.attemptReopenMethodNone = mmaModAssignAttemptReopenMethodNone;
                 scope.unlimitedAttempts = mmaModAssignUnlimitedAttempts;
+                scope.maxAttemptsText = $translate.instant('mma.mod_assign.unlimitedattempts');
                 scope.blindMarking = scope.isSubmittedForGrading && assign.blindmarking && !assign.revealidentities;
 
                 if (!scope.blindMarking && submitId != $mmSite.getUserId()) {
@@ -254,7 +354,13 @@ angular.module('mm.addons.mod_assign')
                     scope.submissionStatusAvailable = true;
 
                     scope.lastAttempt = response.lastattempt;
-                    scope.previousAttempts = response.previousattempts;
+                    if (response.previousattempts && response.previousattempts.length > 0) {
+                        var previousAttempts = response.previousattempts.sort(function(a, b) {
+                            return a.attemptnumber - b.attemptnumber;
+                        });
+                        scope.previousAttempt = previousAttempts[previousAttempts.length - 1];
+                    }
+
                     scope.membersToSubmit = [];
                     if (response.lastattempt) {
                         scope.canSubmit = !scope.isSubmittedForGrading && !scope.submittedOffline &&
@@ -329,7 +435,13 @@ angular.module('mm.addons.mod_assign')
                         if (scope.userSubmission) {
                             if (!assign.teamsubmission || !response.lastattempt.submissiongroup ||
                                     !assign.preventsubmissionnotingroup) {
-                                scope.submissionPlugins = scope.userSubmission.plugins;
+                                if (scope.previousAttempt && scope.previousAttempt.submission.plugins &&
+                                        scope.userSubmission.status == mmaModAssignSubmissionStatusReopened) {
+                                    // Get latest attempt if avalaible.
+                                    scope.submissionPlugins = scope.previousAttempt.submission.plugins;
+                                } else {
+                                    scope.submissionPlugins = scope.userSubmission.plugins;
+                                }
                             }
                         }
                     }
@@ -337,7 +449,7 @@ angular.module('mm.addons.mod_assign')
                     if (assign.duedate > 0) {
                         var duedate = response.lastattempt && response.lastattempt.extensionduedate ?
                             response.lastattempt.extensionduedate: assign.duedate,
-                            time = parseInt(Date.now() / 1000);
+                            time = $mmUtil.timestamp();
                             timeRemaining = duedate - time;
                         if (timeRemaining <= 0) {
                             if (!scope.userSubmission || scope.userSubmission.status != mmaModAssignSubmissionStatusSubmitted) {
@@ -369,25 +481,13 @@ angular.module('mm.addons.mod_assign')
                     promises.push(feedbackController(scope, assign, response.feedback, courseId, moduleId, submitId));
 
                     // Check if there's any unsupported plugin for editing.
-                    var plugins;
-                    if (scope.userSubmission) {
-                        plugins = scope.userSubmission.plugins;
-                    } else {
+                    if (!scope.userSubmission) {
+                        scope.userSubmission = {};
                         // Submission not created yet, we have to use assign configs to detect the plugins used.
-                        plugins = [];
-                        angular.forEach(assign.configs, function(config) {
-                            if (config.subtype == 'assignsubmission') {
-                                if (config.name == 'enabled' && parseInt(config.value, 10) === 1) {
-                                    plugins.push({
-                                        type: config.plugin,
-                                        name: config.plugin
-                                    });
-                                }
-                            }
-                        });
+                        scope.userSubmission.plugins = $mmaModAssignHelper.getPluginsEnabled(assign, 'assignsubmission');
                     }
 
-                    promises.push($mmaModAssign.getUnsupportedEditPlugins(plugins).then(function(list) {
+                    promises.push($mmaModAssign.getUnsupportedEditPlugins(scope.userSubmission.plugins).then(function(list) {
                         scope.unsupportedEditPlugins = list;
                     }));
 
@@ -403,7 +503,7 @@ angular.module('mm.addons.mod_assign')
 
                     // Fallback. Legacy code ahead.
                     if (assign.duedate > 0) {
-                        var time = parseInt(Date.now() / 1000);
+                        var time = $mmUtil.timestamp();
                         if (assign.duedate - time <= 0) {
                             scope.timeRemaining = $translate.instant('mma.mod_assign.duedatereached');
                         } else {
@@ -430,11 +530,7 @@ angular.module('mm.addons.mod_assign')
                     });
                 });
             }).catch(function(message) {
-                if (message) {
-                    $mmUtil.showErrorModal(message);
-                } else {
-                    $mmUtil.showErrorModal('Error getting assigment data.');
-                }
+                $mmUtil.showErrorModalDefault(message, 'Error getting assigment data.');
                 return $q.reject();
             }).finally(function() {
                 scope.loaded = true;
@@ -459,7 +555,11 @@ angular.module('mm.addons.mod_assign')
                 courseId = parseInt(attributes.courseid, 10),
                 submitId = parseInt(attributes.submitid, 10),
                 blindId = parseInt(attributes.blindid, 10),
-                obsInvalidated, obsManualSync;
+                blockData,
+                obsInvalidated, obsManualSync, obsSubmitGrade;
+
+            // Block leaving the view, we want to show a confirm to the user if there's unsaved data.
+            blockData = $mmUtil.blockLeaveView(scope, cancel);
 
             scope.isSubmittedForGrading = !!submitId;
             scope.statusNew = mmaModAssignSubmissionStatusNew;
@@ -481,6 +581,15 @@ angular.module('mm.addons.mod_assign')
                 }
             });
 
+            obsSubmitGrade = $mmEvents.on(mmaModAssignEventSubmitGrade, function() {
+                submitGrade().then(function() {
+                    // Go back if not in tablet view.
+                    if (!$ionicPlatform.isTablet()) {
+                        blockData && blockData.back();
+                    }
+                });
+            });
+
             // Check if submit through app is supported.
             $mmaModAssign.isSaveAndSubmitSupported().then(function(enabled) {
                 scope.submitSupported = enabled;
@@ -489,6 +598,11 @@ angular.module('mm.addons.mod_assign')
             scope.$on('$destroy', function() {
                 obsInvalidated && obsInvalidated();
                 obsManualSync && obsManualSync.off && obsManualSync.off();
+                obsSubmitGrade && obsSubmitGrade.off && obsSubmitGrade.off();
+
+                if (scope.assign && scope.isGrading) {
+                    $mmSyncBlock.unblockOperation(mmaModAssignComponent, scope.assign.id);
+                }
             });
 
             controller.load(scope, moduleId, courseId, submitId, blindId);
@@ -510,15 +624,14 @@ angular.module('mm.addons.mod_assign')
                     return;
                 }
 
-                if (!scope.previousAttempts || !scope.previousAttempts.length) {
+                if (!scope.previousAttempt) {
                     // Cannot access previous attempts, just go to edit.
                     scope.goToEdit();
                     return;
                 }
 
                 var modal = $mmUtil.showModalLoading(),
-                    previousAttempt = scope.previousAttempts[scope.previousAttempts.length - 1],
-                    previousSubmission = $mmaModAssign.getSubmissionObjectFromAttempt(scope.assign, previousAttempt);
+                    previousSubmission = $mmaModAssign.getSubmissionObjectFromAttempt(scope.assign, scope.previousAttempt);
 
                 $mmaModAssignHelper.getSubmissionSizeForCopy(scope.assign, previousSubmission).catch(function() {
                     // Error calculating size, return -1.
@@ -559,7 +672,7 @@ angular.module('mm.addons.mod_assign')
             // Show advanced grade action.
             scope.showAdvancedGrade = function() {
                 if (scope.feedback.advancedgrade) {
-                    $mmText.expandText($translate.instant('mma.grades.grade'), scope.feedback.gradefordisplay, false,
+                    $mmText.expandText($translate.instant('mm.grades.grade'), scope.feedback.gradefordisplay, false,
                             mmaModAssignComponent, moduleId);
                 }
             };
@@ -570,36 +683,67 @@ angular.module('mm.addons.mod_assign')
             };
 
             // Submit grade action.
-            scope.submitGrade = function() {
-                if (!scope.canSaveGrades) {
-                    return;
-                }
-
-                var modal = $mmUtil.showModalLoading('mm.core.sending', true),
-                    attemptNumber = scope.userSubmission ? scope.userSubmission.attemptnumber : -1,
-                    outcomes = {};
-
-                angular.forEach(scope.gradeInfo.outcomes, function(outcome) {
-                    if (outcome.itemNumber) {
-                        outcomes[outcome.itemNumber] = outcome.selectedId;
+            function submitGrade() {
+                return hasDataToSave().then(function(modified) {
+                    if (!modified) {
+                        return $q.when();
                     }
+
+                    var attemptNumber = scope.userSubmission ? scope.userSubmission.attemptnumber : -1,
+                        outcomes = {},
+                        modal,
+                        pluginPromise,
+                        // Scale "no grade" uses -1 instead of 0.
+                        grade = scope.grade.scale && scope.grade.grade == 0 ? -1 : $mmUtil.unformatFloat(scope.grade.grade);
+
+                    if (grade === false) {
+                        $mmUtil.showErrorModal('mm.grades.badgrade', true);
+                        return $q.reject();
+                    }
+
+                    modal = $mmUtil.showModalLoading('mm.core.sending', true);
+
+                    angular.forEach(scope.gradeInfo.outcomes, function(outcome) {
+                        if (outcome.itemNumber) {
+                            outcomes[outcome.itemNumber] = outcome.selectedId;
+                        }
+                    });
+
+                    if (scope.feedback && scope.feedback.plugins) {
+                        pluginPromise = $mmaModAssignHelper.prepareFeedbackPluginData(scope.assign.id, submitId, scope.feedback);
+                    } else {
+                        pluginPromise = $q.when({});
+                    }
+
+                    return pluginPromise.then(function(pluginData) {
+                        return $mmaModAssign.submitGradingForm(scope.assign.id, submitId, grade, attemptNumber,
+                                scope.grade.addAttempt, scope.grade.gradingStatus, scope.grade.applyToAll, outcomes, pluginData,
+                                courseId).then(function() {
+
+                            discardDrafts().finally(function() {
+                                // Invalidate and refresh data.
+                                invalidateAndRefresh();
+
+                                $mmEvents.trigger(mmaModAssignGradedEvent, {
+                                    assignmentId: scope.assign.id,
+                                    submissionId: submitId,
+                                    userId: $mmSite.getUserId(),
+                                    siteId: $mmSite.getId()
+                                });
+                            });
+                        });
+                    }).catch(function(error) {
+                        $mmUtil.showErrorModal(error);
+                    }).finally(function() {
+                        // Keep it on submission view.
+                        scope.showSubmission = true;
+                        modal.dismiss();
+                    });
                 });
-
-                return $mmaModAssign.submitGradingForm(scope.assign.id, submitId, scope.grade.grade, attemptNumber,
-                        scope.grade.addAttempt, scope.grade.gradingStatus, scope.grade.applyToAll, outcomes).then(function() {
-
-                    // Invalidate and refresh data.
-                    invalidateAndRefresh();
-
-                }).catch(function(error) {
-                    $mmUtil.showErrorModal(error);
-                }).finally(function() {
-                    modal.dismiss();
-                });
-            };
+            }
 
             // Submit for grading.
-            scope.submit = function(acceptStatement) {
+            scope.submitForGrading = function(acceptStatement) {
                 if (scope.assign.requiresubmissionstatement && !acceptStatement) {
                     $mmUtil.showErrorModal('mma.mod_assign.acceptsubmissionstatement', true);
                     return $q.reject();
@@ -638,16 +782,70 @@ angular.module('mm.addons.mod_assign')
                 if (scope.assign) {
                     promises.push($mmaModAssign.invalidateSubmissionStatusData(scope.assign.id, submitId, !!blindId));
                     promises.push($mmaModAssign.invalidateAssignmentUserMappingsData(scope.assign.id));
+                    promises.push($mmaModAssign.invalidateListParticipantsData(scope.assign.id));
                 }
-                // Get grade addon if avalaible.
-                var $mmaGrades = $mmAddonManager.get('$mmaGrades');
-                if ($mmaGrades) {
-                    promises.push($mmaGrades.invalidateGradeItemsData(courseId, submitId));
-                }
+                promises.push($mmGrades.invalidateGradeModuleItems(courseId, submitId));
                 promises.push($mmCourse.invalidateModule(moduleId));
 
                 return $q.all(promises).finally(function() {
                     return controller.load(scope, moduleId, courseId, submitId, blindId);
+                });
+            }
+
+            // Convenience function to compare data to be saved.
+            function hasDataToSave() {
+                if (!scope.canSaveGrades) {
+                    return $q.when(false);
+                }
+
+                var modified = originalGrades.grade != scope.grade.grade ||
+                    originalGrades.addAttempt != scope.grade.addAttempt ||
+                    originalGrades.applyToAll != scope.grade.applyToAll;
+
+                if (scope.gradeInfo && scope.gradeInfo.outcomes) {
+                    for (var x in scope.gradeInfo.outcomes) {
+                        if (modified) {
+                            return $q.when(true);
+                        }
+                        var outcome = scope.gradeInfo.outcomes[x];
+
+                        modified = originalGrades.outcomes[outcome.id] == 'undefined' ||
+                            originalGrades.outcomes[outcome.id] != outcome.selectedId;
+                    }
+                }
+
+                if (modified) {
+                    return $q.when(true);
+                }
+
+                if (scope.feedback && scope.feedback.plugins) {
+                    return $mmaModAssignHelper.hasFeedbackDraftData(scope.assign.id, submitId, scope.feedback).catch(function() {
+                        // Error ocurred, omit error as not modified.
+                        return $q.when(false);
+                    });
+                }
+                return $q.when(false);
+            }
+
+            // Convenience function to discard feedback drafts.
+            function discardDrafts() {
+                if (scope.feedback && scope.feedback.plugins) {
+                    return $mmaModAssignHelper.discardFeedbackPluginData(scope.assign.id, submitId, scope.feedback);
+                }
+                return $q.when();
+            }
+
+            // Just ask to confirm the lost of data.
+            function cancel() {
+                return hasDataToSave().then(function(modified) {
+                    if (modified) {
+                        // Modified, confirm user wants to go back.
+                        return $mmUtil.showConfirm($translate('mm.core.confirmcanceledit')).then(function() {
+                            return discardDrafts().catch(function() {
+                                // Ignore errors.
+                            });
+                        });
+                    }
                 });
             }
         }

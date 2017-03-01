@@ -21,12 +21,13 @@ angular.module('mm.addons.mod_assign')
  * @ngdoc controller
  * @name mmaModAssignSubmissionListCtrl
  */
-.controller('mmaModAssignSubmissionListCtrl', function($scope, $stateParams, $mmaModAssign, $mmUtil, $translate, $q,
-        mmaModAssignComponent, mmaModAssignSubmissionInvalidatedEvent, mmaModAssignSubmissionStatusSubmitted,
-        mmaModAssignNeedGrading) {
+.controller('mmaModAssignSubmissionListCtrl', function($scope, $stateParams, $mmaModAssign, $mmUtil, $translate, $q, $mmEvents,
+        mmaModAssignComponent, mmaModAssignSubmissionInvalidatedEvent, mmaModAssignSubmissionStatusSubmitted, $mmaModAssignOffline,
+        mmaModAssignNeedGrading, mmaModAssignGradedEvent, $mmSite, $mmaModAssignHelper) {
 
     var courseId = $stateParams.courseid,
-        selectedStatus = $stateParams.status;
+        selectedStatus = $stateParams.status,
+        obsGraded;
 
     if (selectedStatus) {
         if (selectedStatus == mmaModAssignNeedGrading) {
@@ -59,9 +60,9 @@ angular.module('mm.addons.mod_assign')
                 }
 
                 // We want to show the user data on each submission.
-                return $mmaModAssign.listParticipants(assign.id).then(function(p) {
-                    participants = p;
+                return $mmaModAssignHelper.getParticipants(assign).then(function(p) {
                     $scope.haveAllParticipants = true;
+                    participants = p;
                 }).catch(function() {
                     $scope.haveAllParticipants = false;
                     return $q.when();
@@ -76,24 +77,54 @@ angular.module('mm.addons.mod_assign')
                         $scope.submissions = [];
                         angular.forEach(submissions, function(submission) {
                             if (!searchStatus || searchStatus == submission.status) {
-                                var promise;
+                                promises.push($mmaModAssignOffline.getSubmissionGrade(assign.id, submission.userid)
+                                        .catch(function() {
+                                    // Ignore failures.
+                                }).then(function(data) {
+                                    var promise,
+                                        notSynced = false;
 
-                                if (mmaModAssignNeedGrading == selectedStatus) {
-                                    promise = $mmaModAssign.needsSubmissionToBeGraded(submission, assign.id);
-                                } else {
-                                    promise = $q.when(true);
-                                }
-                                promises.push(promise.then(function(add) {
-                                    if (!add) {
-                                        return;
+                                    // Load offline grades.
+                                    if (data && submission.timemodified < data.timemodified) {
+                                        notSynced = true;
                                     }
-                                    submission.statusTranslated = $translate.instant('mma.mod_assign.submissionstatus_' +
-                                        submission.status);
-                                    submission.statusClass = $mmaModAssign.getSubmissionStatusClass(submission.status);
-                                    submission.gradingStatusTranslationId =
-                                        $mmaModAssign.getSubmissionGradingStatusTranslationId(submission.gradingstatus);
-                                    submission.gradingClass = $mmaModAssign.getSubmissionGradingStatusClass(submission.gradingstatus);
-                                    $scope.submissions.push(submission);
+
+                                    if (mmaModAssignNeedGrading == selectedStatus) {
+                                        promise = $mmaModAssign.needsSubmissionToBeGraded(submission, assign.id);
+                                    } else {
+                                        promise = $q.when(true);
+                                    }
+
+                                    return promise.then(function(add) {
+                                        if (!add) {
+                                            return;
+                                        }
+                                        submission.statusClass = $mmaModAssign.getSubmissionStatusClass(submission.status);
+                                        submission.gradingClass =
+                                            $mmaModAssign.getSubmissionGradingStatusClass(submission.gradingstatus);
+
+                                        // Show submission status if not submitted for grading.
+                                        if (submission.statusClass != 'badge-balanced' || !submission.gradingstatus) {
+                                            submission.statusTranslated = $translate.instant('mma.mod_assign.submissionstatus_' +
+                                                submission.status);
+                                        } else {
+                                            submission.statusTranslated = false;
+                                        }
+
+                                        if (notSynced) {
+                                            submission.gradingStatusTranslationId = 'mma.mod_assign.gradenotsynced';
+                                            submission.gradingClass = "";
+                                        } else if (submission.statusClass != 'badge-assertive' ||
+                                                submission.gradingClass != 'badge-assertive') {
+                                            // Show grading status if one of the statuses is not done.
+                                            submission.gradingStatusTranslationId =
+                                                $mmaModAssign.getSubmissionGradingStatusTranslationId(submission.gradingstatus);
+                                        } else {
+                                            submission.gradingStatusTranslationId = false;
+                                        }
+
+                                        $scope.submissions.push(submission);
+                                    });
                                 }));
                             }
                         });
@@ -102,11 +133,7 @@ angular.module('mm.addons.mod_assign')
                 });
             });
         }).catch(function(message) {
-            if (message) {
-                $mmUtil.showErrorModal(message);
-            } else {
-                $mmUtil.showErrorModal('Error getting assigment data.');
-            }
+            $mmUtil.showErrorModalDefault(message, 'Error getting assigment data.');
             return $q.reject();
         });
     }
@@ -130,10 +157,21 @@ angular.module('mm.addons.mod_assign')
         $scope.assignmentLoaded = true;
     });
 
+    obsGraded = $mmEvents.on(mmaModAssignGradedEvent, function(data) {
+        if ($scope.assign && data.assignmentId == $scope.assign.id && data.siteId == $mmSite.getId() &&
+                data.userId == $mmSite.getUserId()) {
+            refreshAllData();
+        }
+    });
+
     // Pull to refresh.
     $scope.refreshSubmissionList = function() {
         refreshAllData().finally(function() {
             $scope.$broadcast('scroll.refreshComplete');
         });
     };
+
+    $scope.$on('$destroy', function() {
+        obsGraded && obsGraded.off && obsGraded.off();
+    });
 });
