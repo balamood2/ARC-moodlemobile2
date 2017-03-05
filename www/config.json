@@ -8,7 +8,7 @@
     "languages": {"ar": "عربي", ,"en": "English"},
     "wsservice" : "moodle_mobile_app",
     "wsextservice" : "local_mobile",
-    "demo_sites": {""},
+    "demo_sites":"",
     "gcmpn": "694767596569",
     "customurlscheme": "moodlemobile",
     "siteurl": "http://schools.arcdsc.com/training/",

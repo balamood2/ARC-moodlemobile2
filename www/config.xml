@@ -5,7 +5,8 @@
         id        = "com.arcdsc.training"
         versionCode = "3"
         version   = "2017-3-4">
-    <name>Learn Moodle</name>
+    <name>ARC Training Mobile app</name>
+	 <content src="index.html"/>
 
     <description>
         ARC Training
