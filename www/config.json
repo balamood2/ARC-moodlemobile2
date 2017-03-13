@@ -1,7 +1,7 @@
 {
     "app_id" : "com.arcdsc.trainingmobile",
     "appname": "ARC Training",
-    "versioncode" : "2017-3-4",
+    "versioncode" : "2017-3-13",
     "versionname" : "ARC-training-3.1.4",
     "cache_expiration_time" : 300000,
     "default_lang" : "en",
