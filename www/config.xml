@@ -1,11 +1,12 @@
 <?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <widget id="com.arcdsc.training" version="2017-3-13" xmlns="http://www.w3.org/ns/widgets" xmlns:cdv="http://cordova.apache.org/ns/1.0">
   <name>ARC Training Mobile</name>
+   <content src="index.html" />
   <description>ARC Training Mobile app</description>
       <author href="http://moodle.com" email="mobile@moodle.com">
         Moodle Pty Ltd
     </author>
-	 <content src="index.html"/>
+	
     <gap:config-file platform="ios" parent="CFBundleShortVersionString">
         <string>1.2</string>
     </gap:config-file>
