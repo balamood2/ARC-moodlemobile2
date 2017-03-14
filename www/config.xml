@@ -47,9 +47,9 @@
     <preference name="BackupWebStorage" value="none" />
     <preference name="KeyboardDisplayRequiresUserAction" value="false" />
 
-    <feature name="StatusBar">
+    <!--<feature name="StatusBar">
         <param name="ios-package" value="CDVStatusBar" onload="true"/>
-    </feature>
+    </feature>-->
 
     <preference name="AndroidPersistentFileLocation"    value="Compatibility" />
     <preference name="iosPersistentFileLocation" value="Compatibility" />
