@@ -2,21 +2,21 @@
 <widget xmlns     = "http://www.w3.org/ns/widgets"
         xmlns:gap = "http://phonegap.com/ns/1.0"
         xmlns:android = "http://schemas.android.com/apk/res/android"
-        id        = "com.moodle.moodlemobile"
+        id        = "com.arcdsc.com"
         versionCode = "20170318"
         version   = "3.2.1">
     <name>Moodle Mobile</name>
 
     <description>
-        Moodle Mobile official app
+        ARC Training Center
     </description>
 
     <author href="http://www.arcdsc.com" email="info@arcdsc.com">
-        Moodle Pty Ltd
+        ARC Digtal Aolutions and Consultancy
     </author>
 
     <gap:config-file platform="ios" parent="CFBundleShortVersionString">
-        <string>3.2.2</string>
+        <string>3.2.1</string>
     </gap:config-file>
 
     <gap:platform name="ios" />
@@ -101,13 +101,16 @@
     <gap:splash src="resources/android/splash/drawable-port-xxxhdpi-screen.png"   gap:platform="android" gap:qualifier="port-xxxhdpi"/>
 
 
+   
+   <!--<gap:splash src="resources/ios/splash/Default-736h.png"               gap:platform="ios" width="1242" height="2208"/>
+   <gap:splash src="resources/ios/splash/Default-Landscape-736h.png"     gap:platform="ios" width="2208" height="1242"/>
+   <gap:splash src="resources/ios/splash/Default-Landscape@2x~ipad.png"  gap:platform="ios" width="2048" height="1536"/>
+   <gap:splash src="resources/ios/splash/Default-Portrait@2x~ipad.png"   gap:platform="ios" width="1536" height="2048"/>-->
+   
+   
+	<gap:splash src="resources/ios/splash/Default-Landscape~ipad.png"     gap:platform="ios" width="1024" height="768"/>
     <gap:splash src="resources/ios/splash/Default-568h@2x~iphone.png"     gap:platform="ios" width="640" height="1136"/>
     <gap:splash src="resources/ios/splash/Default-667h.png"               gap:platform="ios" width="750" height="1334"/>
-    <gap:splash src="resources/ios/splash/Default-736h.png"               gap:platform="ios" width="1242" height="2208"/>
-    <gap:splash src="resources/ios/splash/Default-Landscape-736h.png"     gap:platform="ios" width="2208" height="1242"/>
-    <gap:splash src="resources/ios/splash/Default-Landscape@2x~ipad.png"  gap:platform="ios" width="2048" height="1536"/>
-    <gap:splash src="resources/ios/splash/Default-Landscape~ipad.png"     gap:platform="ios" width="1024" height="768"/>
-    <gap:splash src="resources/ios/splash/Default-Portrait@2x~ipad.png"   gap:platform="ios" width="1536" height="2048"/>
     <gap:splash src="resources/ios/splash/Default-Portrait~ipad.png"      gap:platform="ios" width="768" height="1024"/>
     <gap:splash src="resources/ios/splash/Default@2x~iphone.png"          gap:platform="ios" width="640" height="960"/>
     <gap:splash src="resources/ios/splash/Default~iphone.png"             gap:platform="ios" width="320" height="480"/>
