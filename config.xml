@@ -20,7 +20,11 @@
     </gap:config-file>
 
     <gap:platform name="ios" />
-
+	
+	
+	<content src="index.html"/>
+	
+	
     <access origin="*" />
     <access origin="tel:*" launch-external="yes" />
     <access origin="mailto:*" launch-external="yes" />
