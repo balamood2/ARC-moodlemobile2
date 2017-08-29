@@ -24,6 +24,7 @@ angular.module('mm.core', ['pascalprecht.translate'])
 .constant('mmCoreSecondsDay', 86400)
 .constant('mmCoreSecondsHour', 3600)
 .constant('mmCoreSecondsMinute', 60)
+.constant('mmCoreDontShowError', 'mmCoreDontShowError') // Pass it to reject functions to indicate that no error should be shown.
 
 // States for downloading files/modules.
 .constant('mmCoreDownloaded', 'downloaded')
@@ -144,6 +145,46 @@ angular.module('mm.core', ['pascalprecht.translate'])
         return angular.isObject(data) && String(data) !== '[object File]' ? $mmUtilProvider.param(data) : data;
     }];
 
+    // Angular's default transform detects RTF format as JSON, throwing an error when trying to parse it.
+    // This custom transform fixes this problem.
+    $httpProvider.defaults.transformResponse = [function(data, headers) {
+        if (angular.isString(data)) {
+            // Strip json vulnerability protection prefix and trim whitespace
+            var JSON_PROTECTION_PREFIX = /^\)\]\}',?\n/,
+                tempData = data.replace(JSON_PROTECTION_PREFIX, '').trim();
+
+            if (tempData) {
+                var contentType = headers('Content-Type');
+                if ((contentType && (contentType.indexOf('application/json') === 0)) || isJsonLike(tempData, contentType)) {
+                    try {
+                        data = angular.fromJson(tempData);
+                    } catch(ex) {
+                        // Error parsing data, leave the data as it is.
+                    }
+                }
+            }
+        }
+
+        return data;
+
+        // Check if the returned data is JSON.
+        function isJsonLike(str, contentType) {
+            if (contentType && contentType.indexOf('text/rtf') != -1) {
+                // RTF files can be mistaken as JSON since they start and end with {}.
+                return false;
+            }
+
+            var JSON_START = /^\[|^\{(?!\{)/,
+                JSON_ENDS = {
+                  '[': /]$/,
+                  '{': /}$/
+                },
+                jsonStart = str.match(JSON_START);
+
+            return jsonStart && JSON_ENDS[jsonStart[0]].test(str);
+        }
+    }];
+
     // Add some protocols to safe protocols.
     function addProtocolIfMissing(list, protocol) {
         if (list.indexOf(protocol) == -1) {
@@ -231,11 +272,12 @@ angular.module('mm.core', ['pascalprecht.translate'])
                                 $ionicScrollDelegate.$getByHandle(delegateHandle) : $ionicScrollDelegate;
 
                         // Scroll to the position.
-                        $ionicScrollDelegate.scrollTo(position[0], position[1]);
+                        scrollView.scrollTo(position[0], position[1]);
                     }
                 }
             }
         });
+
         $window.addEventListener('native.keyboardhide', function(e) {
             $mmEvents.trigger(mmCoreEventKeyboardHide, e);
 
@@ -244,6 +286,17 @@ angular.module('mm.core', ['pascalprecht.translate'])
                 ionic.trigger('resize');
             }
         });
+
+        // In desktop, re-define getParentOrSelfWithClass to allow scrolling with trackpad when hovering deep elements.
+        // In iOS, re-define getParentWithClass to prevent the keyboard to hide deep input elements.
+        var fnName = !$mmApp.isDevice() ? 'getParentOrSelfWithClass' : (ionic.Platform.isIOS() ? 'getParentWithClass' : '');
+        if (fnName) {
+            var originalFunction = ionic.DomUtil[fnName];
+            ionic.DomUtil[fnName] = function(e, className, depth) {
+                depth = depth || 20;
+                return originalFunction(e, className, depth);
+            };
+        }
     });
 
     // Send event when device goes online.

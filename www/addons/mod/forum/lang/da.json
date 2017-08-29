@@ -5,6 +5,7 @@
     "cannotcreatediscussion": "Kunne ikke oprette en ny tråd.",
     "couldnotadd": "Kunne ikke tilføje dit indlæg pga. en ukendt fejl",
     "discussion": "Tråd",
+    "discussionpinned": "Fastgjort",
     "discussionsubscription": "Abonnement på tråd",
     "edit": "Rediger",
     "erroremptymessage": "Indlægget kan ikke være tomt.",
@@ -24,8 +25,6 @@
     "refreshdiscussions": "Genindlæs diskussioner",
     "refreshposts": "Genindlæs indlæg",
     "reply": "Svar",
-    "sortnewestfirst": "Vis nyeste først",
-    "sortoldestfirst": "Vis ældste først",
     "subject": "Emne",
     "unread": "Ikke læst",
     "unreadpostsnumber": "{{$a}} nye indlæg"

@@ -333,6 +333,8 @@ angular.module('mm.core')
                     // Store session.
                     self.login(siteId);
                     $mmEvents.trigger(mmCoreEventSiteAdded, siteId);
+
+                    return siteId;
                 });
             } else {
                 return $mmLang.translateAndReject('mm.login.invalidmoodleversion');
@@ -911,7 +913,7 @@ angular.module('mm.core')
         // Check if URL has http(s) protocol.
         if (!url.match(/^https?:\/\//i)) {
             // URL doesn't have http(s) protocol. Check if it has any protocol.
-            if (url.match(/^[^:]{2,10}:\/\//i)) {
+            if ($mmUtil.isAbsoluteURL(url)) {
                 // It has some protocol. Return empty array.
                 return $q.when([]);
             } else {
